@@ -15,7 +15,7 @@ use embedded_hal::digital::OutputPin;
 use embedded_hal::blocking::spi::Transfer as SpiTransfer;
 
 mod config;
-pub use config::{Configuration, CrcMode, DataRate};
+pub use config::{Configuration, CrcMode, DataRate, PAControl};
 pub mod setup;
 
 mod registers;

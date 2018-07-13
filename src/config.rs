@@ -17,6 +17,22 @@ impl Default for DataRate {
     }
 }
 
+/// Supported Power Levels
+#[derive(Debug, PartialEq, Copy, Clone)]
+#[repr(u8)]
+pub enum PAControl {
+    PAMax = 0b11,
+    PAMinus6 = 0b10,
+    PAMinus12 = 0b01,
+    PAMin = 0b00,
+}
+
+impl Default for PAControl {
+    fn default() -> PAControl {
+        PAControl::PAMinus6
+    }
+}
+
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum CrcMode {
     OneByte,
@@ -58,10 +74,9 @@ pub trait Configuration {
     }
 
     /// power: `0`: -18 dBm, `3`: 0 dBm
-    fn set_rf(&mut self, rate: DataRate, power: u8) -> Result<(), <<Self as Configuration>::Inner as Device>::Error> {
-        assert!(power < 0b100);
+    fn set_rf(&mut self, rate: DataRate, power: PAControl) -> Result<(), <<Self as Configuration>::Inner as Device>::Error> {
         let mut register = RfSetup(0);
-        register.set_rf_pwr(power);
+        register.set_rf_pwr(power as u8);
 
         let (dr_low, dr_high) = match rate {
             DataRate::R250Kbps => (true, false),
@@ -109,6 +124,9 @@ pub trait Configuration {
                 }
             )
         }
+        // TODO: Instead of panicing, save P0 and overwrite it when going into TX mode so Acks
+        // still work
+        assert!(pipe_no > 0, "Currently, using P0 for reading is not supported because it interferes with Acks");
         w!(0, RxAddrP0;
            1, RxAddrP1;
            2, RxAddrP2;
@@ -121,6 +139,9 @@ pub trait Configuration {
     fn set_tx_addr(&mut self, addr: &[u8]) -> Result<(), <<Self as Configuration>::Inner as Device>::Error> {
         let register = TxAddr::new(addr);
         self.device().write_register(register)?;
+        // Important: Write P0 or we won't get acks
+        let rx_register = ::registers::RxAddrP0::new(addr);
+        self.device().write_register(rx_register)?;
         Ok(())
     }
 
