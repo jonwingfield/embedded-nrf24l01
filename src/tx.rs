@@ -28,10 +28,11 @@ impl<D: Device> TxMode<D> {
     }
 
     /// Disable `CE` so that you can switch into RX mode.
-    pub fn standby(mut self) -> Result<StandbyMode<D>, D::Error> {
-        self.wait_empty()?;
-
-        Ok(StandbyMode::from_rx_tx(self.device))
+    pub fn standby(mut self) -> Result<StandbyMode<D>, (Self, D::Error)> {
+        match self.wait_empty() {
+            Ok(_) => Ok(StandbyMode::from_rx_tx(self.device)),
+            Err(e) => Err((self, e))
+        }
     }
 
     /// Is TX FIFO empty?
@@ -61,9 +62,16 @@ impl<D: Device> TxMode<D> {
         Ok(())
     }
 
+    pub fn send_sync(&mut self, packet: &[u8]) -> Result<bool, D::Error> {
+        self.device.send_command(&WriteTxPayload::new(packet))?;
+        self.device.ce_enable();
+        self.wait_empty()
+    }
+
     /// Wait until FX FIFO is empty
-    pub fn wait_empty(&mut self) -> Result<(), D::Error> {
+    pub fn wait_empty(&mut self) -> Result<bool, D::Error> {
         let mut empty = false;
+        let mut result = true;
         while ! empty {
             let (status, fifo_status) =
                 self.device.read_register::<FifoStatus>()?;
@@ -73,18 +81,25 @@ impl<D: Device> TxMode<D> {
             }
 
             // TX won't continue while MAX_RT is set
-            if status.max_rt() {
+            if status.tx_ds() || status.max_rt() {
+                result = !status.max_rt();
                 let mut clear = Status(0);
                 // Clear TX interrupts
                 clear.set_tx_ds(true);
                 clear.set_max_rt(true);
+                clear.set_rx_dr(true);
                 self.device.write_register(clear)?;
+                if status.max_rt() {
+                    self.flush_tx()?;
+                }
+                break;
             }
+
         }
         // Can save power now
         self.device.ce_disable();
 
-        Ok(())
+        Ok(result)
     }
 
     pub fn observe(&mut self) -> Result<ObserveTx, D::Error> {
