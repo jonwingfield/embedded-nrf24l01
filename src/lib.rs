@@ -36,6 +36,8 @@ pub use rx::RxMode;
 mod tx;
 pub use tx::TxMode;
 
+mod network;
+
 pub const PIPES_COUNT: usize = 6;
 pub const MIN_ADDR_BYTES: usize = 3;
 pub const MAX_ADDR_BYTES: usize = 5;
