@@ -10,6 +10,7 @@ pub struct RxMode<D: Device> {
     device: D,
 }
 
+#[cfg(not(feature = "tiny"))]
 impl<D: Device> fmt::Debug for RxMode<D> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "RxMode")

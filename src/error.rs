@@ -1,6 +1,6 @@
 use core::fmt::Debug;
 
-#[derive(Debug)]
+// #[derive(Debug)]
 pub enum Error<SPIE: Debug> {
     SpiError(SPIE),
 }

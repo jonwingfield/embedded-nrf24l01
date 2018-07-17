@@ -49,7 +49,10 @@ pub struct NRF24L01<CE: OutputPin, CSN: OutputPin, SPI: SpiTransfer<u8>> {
     config: Config,
 }
 
-impl<CE: OutputPin, CSN: OutputPin, SPI: SpiTransfer<u8, Error=SPIE>, SPIE: Debug> fmt::Debug for NRF24L01<CE, CSN, SPI> {
+#[cfg(not(feature = "tiny"))]
+impl<CE: OutputPin, CSN: OutputPin, SPI: SpiTransfer<u8, Error = SPIE>, SPIE: Debug> fmt::Debug
+    for NRF24L01<CE, CSN, SPI>
+{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "NRF24L01")
     }
@@ -70,7 +73,10 @@ impl<CE: OutputPin, CSN: OutputPin, SPI: SpiTransfer<u8, Error=SPIE>, SPIE: Debu
             ce, csn, spi,
             config,
         };
-        assert!(device.is_connected().unwrap());
+        if !device.is_connected()? {
+            // panic!("No device");
+        }
+        // debug_assert!(device.is_connected().unwrap());
 
         // TODO: activate features?
         
