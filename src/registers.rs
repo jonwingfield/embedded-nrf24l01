@@ -1,48 +1,45 @@
 #![allow(unused)]
 
-use {PIPES_COUNT, MIN_ADDR_BYTES, MAX_ADDR_BYTES};
+use {MAX_ADDR_BYTES, MIN_ADDR_BYTES, PIPES_COUNT};
 
 pub trait Register {
     /// Address in the register map
     fn addr() -> u8;
 
-    fn read_len() -> usize;
-    fn write_len(&self) -> usize {
-        Self::read_len()
-    }
+    fn data(&self) -> u8;
 
-    fn encode(&self, &mut [u8]);
     fn decode(&[u8]) -> Self;
 }
 
+pub trait AddressRegister<'a> {
+    fn addr() -> u8;
+    fn data(&self) -> &'a [u8];
+}
+
 macro_rules! def_simple {
-    ($name: ident) => (
+    ($name:ident) => {
         pub struct $name(pub u8);
 
         impl $name {
             pub fn new(data: &[u8]) -> Self {
-                assert_eq!(data.len(), 1);
+                debug_assert_eq!(data.len(), 1);
 
                 $name(data[0])
             }
         }
-    )
+    };
 }
 
 /// Common for all registers with 1 bytes of data
 macro_rules! impl_register {
-    ($name: ident, $addr: expr) => (
+    ($name:ident, $addr:expr) => {
         impl Register for $name {
             fn addr() -> u8 {
                 $addr
             }
 
-            fn read_len() -> usize {
-                1
-            }
-
-            fn encode(&self, buf: &mut [u8]) {
-                buf[0] = self.0;
+            fn data(&self) -> u8 {
+                self.0
             }
 
             fn decode(buf: &[u8]) -> Self {
@@ -61,56 +58,11 @@ macro_rules! impl_register {
                 self.0 == rhs.0
             }
         }
-    )
-}
-
-
-macro_rules! def_address_register {
-    ($name: ident, $addr: expr) => (
-        pub struct $name {
-            addr: [u8; MAX_ADDR_BYTES],
-            len: u8,
-        }
-
-        impl $name {
-            pub fn new(buf: &[u8]) -> Self {
-                Self::decode(buf)
-            }
-        }
-
-        impl Register for $name {
-            fn addr() -> u8 {
-                $addr
-            }
-
-            fn read_len() -> usize {
-                MAX_ADDR_BYTES
-            }
-
-            fn write_len(&self) -> usize {
-                self.len.into()
-            }
-
-            fn encode(&self, buf: &mut [u8]) {
-                let len = self.len.into();
-                buf.copy_from_slice(&self.addr[0..len]);
-            }
-
-            fn decode(buf: &[u8]) -> Self {
-                let len = buf.len();
-                assert!(len >= MIN_ADDR_BYTES);
-                assert!(len <= MAX_ADDR_BYTES);
-
-                let mut addr = [0; MAX_ADDR_BYTES];
-                addr[0..len].copy_from_slice(buf);
-                $name { addr, len: len as u8 }
-            }
-        }
-    )
+    };
 }
 
 macro_rules! def_pipes_accessors {
-    ($name: ident, $default: expr, $getter: ident, $setter: ident) => (
+    ($name:ident, $default:expr, $getter:ident, $setter:ident) => {
         impl $name {
             #[inline]
             pub fn $getter(&self, pipe_no: usize) -> bool {
@@ -128,10 +80,10 @@ macro_rules! def_pipes_accessors {
                 }
             }
 
-            pub fn from_bools(bools: &[bool; PIPES_COUNT]) -> Self {
+            pub fn from_bools(bools: impl IntoIterator<Item = bool>) -> Self {
                 let mut register = $name($default);
-                for (i, b) in bools.iter().enumerate() {
-                    register.$setter(i, *b);
+                for (i, b) in bools.into_iter().enumerate() {
+                    register.$setter(i, b);
                 }
                 register
             }
@@ -144,7 +96,34 @@ macro_rules! def_pipes_accessors {
                 bools
             }
         }
-    )
+    };
+}
+
+macro_rules! def_address_register {
+    ($name:ident, $addr:expr) => {
+        pub struct $name<'a> {
+            addr: &'a [u8],
+        }
+
+        impl<'a> $name<'a> {
+            pub fn new(buf: &'a [u8]) -> Self {
+                let len = buf.len();
+                debug_assert!(len >= MIN_ADDR_BYTES);
+                debug_assert!(len <= MAX_ADDR_BYTES);
+                $name { addr: buf }
+            }
+        }
+
+        impl<'a> AddressRegister<'a> for $name<'a> {
+            fn addr() -> u8 {
+                $addr
+            }
+
+            fn data(&self) -> &'a [u8] {
+                self.addr
+            }
+        }
+    };
 }
 
 bitfield! {
@@ -278,7 +257,7 @@ impl_register!(RxAddrP5, 0x0F);
 def_address_register!(TxAddr, 0x10);
 
 macro_rules! def_rx_pw {
-    ($name: ident, $addr: expr) => (
+    ($name:ident, $addr:expr) => {
         bitfield! {
             /// Static payload length for RX
             pub struct $name(u8);
@@ -288,7 +267,7 @@ macro_rules! def_rx_pw {
             pub u8, get, set: 5, 0;
         }
         impl_register!($name, $addr);
-    )
+    };
 }
 
 def_rx_pw!(RxPwP0, 0x11);

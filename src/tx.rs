@@ -1,9 +1,10 @@
-use core::fmt;
 use command::WriteTxPayload;
-use registers::{Status, FifoStatus, ObserveTx};
-use device::Device;
-use standby::StandbyMode;
 use config::Configuration;
+#[cfg(not(feature = "tiny"))]
+use core::fmt;
+use device::Device;
+use registers::{FifoStatus, ObserveTx, Status};
+use standby::StandbyMode;
 
 /// Represents **TX Mode** and the associated **TX Settling** and
 /// **Standby-II** states
@@ -32,21 +33,19 @@ impl<D: Device> TxMode<D> {
     pub fn standby(mut self) -> Result<StandbyMode<D>, (Self, D::Error)> {
         match self.wait_empty() {
             Ok(_) => Ok(StandbyMode::from_rx_tx(self.device)),
-            Err(e) => Err((self, e))
+            Err(e) => Err((self, e)),
         }
     }
 
     /// Is TX FIFO empty?
     pub fn is_empty(&mut self) -> Result<bool, D::Error> {
-        let (_, fifo_status) =
-            self.device.read_register::<FifoStatus>()?;
+        let (_, fifo_status) = self.device.read_register::<FifoStatus>()?;
         Ok(fifo_status.tx_empty())
     }
 
     /// Is TX FIFO full?
     pub fn is_full(&mut self) -> Result<bool, D::Error> {
-        let (_, fifo_status) =
-            self.device.read_register::<FifoStatus>()?;
+        let (_, fifo_status) = self.device.read_register::<FifoStatus>()?;
         Ok(fifo_status.tx_full())
     }
 
@@ -58,13 +57,15 @@ impl<D: Device> TxMode<D> {
 
     /// Send asynchronously
     pub fn send(&mut self, packet: &[u8]) -> Result<(), D::Error> {
-        self.device.send_command(&WriteTxPayload::new(packet))?;
+        self.device
+            .send_command_reg(WriteTxPayload::addr(), packet)?;
         self.device.ce_enable();
         Ok(())
     }
 
     pub fn send_sync(&mut self, packet: &[u8]) -> Result<bool, D::Error> {
-        self.device.send_command(&WriteTxPayload::new(packet))?;
+        self.device
+            .send_command_reg(WriteTxPayload::addr(), packet)?;
         self.device.ce_enable();
         self.wait_empty()
     }
@@ -73,11 +74,10 @@ impl<D: Device> TxMode<D> {
     pub fn wait_empty(&mut self) -> Result<bool, D::Error> {
         let mut empty = false;
         let mut result = true;
-        while ! empty {
-            let (status, fifo_status) =
-                self.device.read_register::<FifoStatus>()?;
+        while !empty {
+            let (status, fifo_status) = self.device.read_register::<FifoStatus>()?;
             empty = fifo_status.tx_empty();
-            if ! empty {
+            if !empty {
                 self.device.ce_enable();
             }
 
@@ -95,7 +95,6 @@ impl<D: Device> TxMode<D> {
                 }
                 break;
             }
-
         }
         // Can save power now
         self.device.ce_disable();
@@ -104,8 +103,7 @@ impl<D: Device> TxMode<D> {
     }
 
     pub fn observe(&mut self) -> Result<ObserveTx, D::Error> {
-        let (_, observe_tx) =
-            self.device.read_register()?;
+        let (_, observe_tx) = self.device.read_register()?;
         Ok(observe_tx)
     }
 }

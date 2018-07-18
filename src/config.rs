@@ -1,6 +1,9 @@
 use command::{FlushRx, FlushTx, Nop};
-use registers::{Status, RfCh, RfSetup, TxAddr, EnRxaddr, SetupRetr, EnAa, SetupAw, Dynpd, Feature};
 use device::Device;
+use registers::{
+    AddressRegister, Dynpd, EnAa, EnRxaddr, Feature, Register, RfCh, RfSetup, SetupAw, SetupRetr,
+    Status,
+};
 use PIPES_COUNT;
 
 /// Supported air data rates.
@@ -44,37 +47,40 @@ pub trait Configuration {
     fn device(&mut self) -> &mut Self::Inner;
 
     fn flush_rx(&mut self) -> Result<(), <<Self as Configuration>::Inner as Device>::Error> {
-        self.device()
-            .send_command(&FlushRx)?;
+        self.device().send_command_reg(FlushRx::addr(), &[])?;
         Ok(())
     }
 
     fn flush_tx(&mut self) -> Result<(), <<Self as Configuration>::Inner as Device>::Error> {
-        self.device()
-            .send_command(&FlushTx)?;
+        self.device().send_command_reg(FlushTx::addr(), &[])?;
         Ok(())
     }
 
     fn get_frequency(&mut self) -> Result<u8, <<Self as Configuration>::Inner as Device>::Error> {
-        let (_, register) =
-            self.device().read_register::<RfCh>()?;
+        let (_, register) = self.device().read_register::<RfCh>()?;
         let freq_offset = register.rf_ch();
         Ok(freq_offset)
     }
 
-    fn set_frequency(&mut self, freq_offset: u8) -> Result<(), <<Self as Configuration>::Inner as Device>::Error> {
-        assert!(freq_offset < 126);
+    fn set_frequency(
+        &mut self,
+        freq_offset: u8,
+    ) -> Result<(), <<Self as Configuration>::Inner as Device>::Error> {
+        debug_assert!(freq_offset < 126);
 
         let mut register = RfCh(0);
         register.set_rf_ch(freq_offset);
-        self.device()
-            .write_register(register)?;
+        self.device().write_register(register)?;
 
         Ok(())
     }
 
     /// power: `0`: -18 dBm, `3`: 0 dBm
-    fn set_rf(&mut self, rate: DataRate, power: PAControl) -> Result<(), <<Self as Configuration>::Inner as Device>::Error> {
+    fn set_rf(
+        &mut self,
+        rate: DataRate,
+        power: PAControl,
+    ) -> Result<(), <<Self as Configuration>::Inner as Device>::Error> {
         let mut register = RfSetup(0);
         register.set_rf_pwr(power as u8);
 
@@ -86,66 +92,76 @@ pub trait Configuration {
         register.set_rf_dr_low(dr_low);
         register.set_rf_dr_high(dr_high);
 
-        self.device()
-            .write_register(register)?;
+        self.device().write_register(register)?;
         Ok(())
     }
 
-    fn set_crc(&mut self, mode: Option<CrcMode>) -> Result<(), <<Self as Configuration>::Inner as Device>::Error> {
-        self.device().update_config(|config| {
-            match mode {
-                None       => config.set_en_crc(false),
-                Some(mode) => match mode {
-                    CrcMode::OneByte  => config.set_crco(false),
-                    CrcMode::TwoBytes => config.set_crco(true),
-                },
-            }
+    fn set_crc(
+        &mut self,
+        mode: Option<CrcMode>,
+    ) -> Result<(), <<Self as Configuration>::Inner as Device>::Error> {
+        self.device().update_config(|config| match mode {
+            None => config.set_en_crc(false),
+            Some(mode) => match mode {
+                CrcMode::OneByte => config.set_crco(false),
+                CrcMode::TwoBytes => config.set_crco(true),
+            },
         })
     }
 
-    fn set_pipes_rx_enable(&mut self, bools: &[bool; PIPES_COUNT]) -> Result<(), <<Self as Configuration>::Inner as Device>::Error> {
+    fn set_pipes_rx_enable(
+        &mut self,
+        bools: &[bool; PIPES_COUNT],
+    ) -> Result<(), <<Self as Configuration>::Inner as Device>::Error> {
+        let reg = EnRxaddr::from_bools(bools.iter().map(|b| *b));
+        self.device().write_register(reg)?;
+        Ok(())
+    }
+
+    // TODO: Addresses don't work like this. There's a 'base' address and a 1-byte secondary
+    // address. See datasheet, page 37 for a diagram and explanation of the Multiceiver arch
+    fn set_rx_addr(
+        &mut self,
+        pipe_no: usize,
+        addr: &[u8],
+    ) -> Result<(), <<Self as Configuration>::Inner as Device>::Error> {
+        match pipe_no {
+            // TODO: Instead of panicing, save P0 and overwrite it when going into TX mode so Acks
+            // still work
+            0 => panic!(
+                "Currently, using P0 for reading is not supported because it interferes with Acks"
+            ),
+            1 => self.device()
+                .write_register_i(::registers::RxAddrP1::addr(), addr),
+            2 => self.device()
+                .write_register_i(::registers::RxAddrP2::addr(), &[addr[0]]),
+            3 => self.device()
+                .write_register_i(::registers::RxAddrP3::addr(), &[addr[0]]),
+            4 => self.device()
+                .write_register_i(::registers::RxAddrP4::addr(), &[addr[0]]),
+            5 => self.device()
+                .write_register_i(::registers::RxAddrP5::addr(), &[addr[0]]),
+            _ => panic!("No such pipe"),
+        }.map(|_status| ())
+    }
+
+    fn set_tx_addr(
+        &mut self,
+        addr: &[u8],
+    ) -> Result<(), <<Self as Configuration>::Inner as Device>::Error> {
         self.device()
-            .write_register(EnRxaddr::from_bools(bools))?;
-        Ok(())
-    }
-
-    fn set_rx_addr(&mut self, pipe_no: usize, addr: &[u8]) -> Result<(), <<Self as Configuration>::Inner as Device>::Error> {
-        macro_rules! w {
-            ( $($no: expr, $name: ident);+ ) => (
-                match pipe_no {
-                    $(
-                        $no => {
-                            use registers::$name;
-                            let register = $name::new(addr);
-                            self.device().write_register(register)?;
-                        }
-                    )+
-                        _ => panic!("No such pipe {}", pipe_no)
-                }
-            )
-        }
-        // TODO: Instead of panicing, save P0 and overwrite it when going into TX mode so Acks
-        // still work
-        assert!(pipe_no > 0, "Currently, using P0 for reading is not supported because it interferes with Acks");
-        w!(0, RxAddrP0;
-           1, RxAddrP1;
-           2, RxAddrP2;
-           3, RxAddrP3;
-           4, RxAddrP4;
-           5, RxAddrP5);
-        Ok(())
-    }
-
-    fn set_tx_addr(&mut self, addr: &[u8]) -> Result<(), <<Self as Configuration>::Inner as Device>::Error> {
-        let register = TxAddr::new(addr);
-        self.device().write_register(register)?;
+            .write_register_i(::registers::TxAddr::addr(), addr)?;
         // Important: Write P0 or we won't get acks
-        let rx_register = ::registers::RxAddrP0::new(addr);
-        self.device().write_register(rx_register)?;
+        self.device()
+            .write_register_i(::registers::RxAddrP0::addr(), addr)?;
         Ok(())
     }
 
-    fn set_auto_retransmit(&mut self, delay: u8, count: u8) -> Result<(), <<Self as Configuration>::Inner as Device>::Error> {
+    fn set_auto_retransmit(
+        &mut self,
+        delay: u8,
+        count: u8,
+    ) -> Result<(), <<Self as Configuration>::Inner as Device>::Error> {
         let mut register = SetupRetr(0);
         register.set_ard(delay);
         register.set_arc(count);
@@ -153,45 +169,47 @@ pub trait Configuration {
         Ok(())
     }
 
-    fn get_auto_ack(&mut self) -> Result<[bool; PIPES_COUNT], <<Self as Configuration>::Inner as Device>::Error> {
+    fn get_auto_ack(
+        &mut self,
+    ) -> Result<[bool; PIPES_COUNT], <<Self as Configuration>::Inner as Device>::Error> {
         // Read
         let (_, register) = self.device().read_register::<EnAa>()?;
         Ok(register.to_bools())
     }
 
-    fn set_auto_ack(&mut self, bools: &[bool; PIPES_COUNT]) -> Result<(), <<Self as Configuration>::Inner as Device>::Error> {
+    fn set_auto_ack(
+        &mut self,
+        bools: &[bool; PIPES_COUNT],
+    ) -> Result<(), <<Self as Configuration>::Inner as Device>::Error> {
         // Convert back
-        let register = EnAa::from_bools(bools);
+        let register = EnAa::from_bools(bools.iter().map(|b| *b));
         // Write back
-        self.device()
-            .write_register(register)?;
+        self.device().write_register(register)?;
         Ok(())
     }
 
-    fn get_address_width(&mut self) -> Result<u8, <<Self as Configuration>::Inner as Device>::Error> {
-        let (_, register) =
-            self.device()
-            .read_register::<SetupAw>()?;
+    fn get_address_width(
+        &mut self,
+    ) -> Result<u8, <<Self as Configuration>::Inner as Device>::Error> {
+        let (_, register) = self.device().read_register::<SetupAw>()?;
         Ok(2 + register.aw())
     }
 
-    fn get_interrupts(&mut self) -> Result<(bool, bool, bool), <<Self as Configuration>::Inner as Device>::Error> {
-        let (status, ()) = self.device()
-            .send_command(&Nop)?;
-        Ok((
-            status.rx_dr(),
-            status.tx_ds(),
-            status.max_rt()
-        ))
+    fn get_interrupts(
+        &mut self,
+    ) -> Result<(bool, bool, bool), <<Self as Configuration>::Inner as Device>::Error> {
+        let status = self.device().send_command_reg(Nop::addr(), &[])?;
+        Ok((status.rx_dr(), status.tx_ds(), status.max_rt()))
     }
 
-    fn clear_interrupts(&mut self) -> Result<(), <<Self as Configuration>::Inner as Device>::Error> {
+    fn clear_interrupts(
+        &mut self,
+    ) -> Result<(), <<Self as Configuration>::Inner as Device>::Error> {
         let mut clear = Status(0);
         clear.set_rx_dr(true);
         clear.set_tx_ds(true);
         clear.set_max_rt(true);
-        self.device()
-            .write_register(clear)?;
+        self.device().write_register(clear)?;
         Ok(())
     }
 
@@ -200,41 +218,30 @@ pub trait Configuration {
     /// * `Some(len)`: Static payload length `len`
     fn set_pipes_rx_lengths(
         &mut self,
-        lengths: &[Option<u8>; PIPES_COUNT]
+        lengths: &[Option<u8>; PIPES_COUNT],
     ) -> Result<(), <<Self as Configuration>::Inner as Device>::Error> {
         // Enable dynamic payload lengths
-        let mut bools = [true; PIPES_COUNT];
-        for (i, length) in lengths.iter().enumerate() {
-            bools[i] = length.is_none();
-        }
-        let dynpd = Dynpd::from_bools(&bools);
+        let bools = lengths.iter().map(|length| length.is_none());
+        let dynpd = Dynpd::from_bools(bools);
         if dynpd.0 != 0 {
-            self.device()
-                .update_register::<Feature, _, _>(|feature| {
-                    feature.set_en_dpl(true);
-                })?;
+            self.device().update_register::<Feature, _, _>(|feature| {
+                feature.set_en_dpl(true);
+            })?;
         }
-        self.device()
-            .write_register(dynpd)?;
+        self.device().write_register(dynpd)?;
 
-        // Set static payload lengths
-        macro_rules! set_rx_pw {
-            ($name: ident, $index: expr) => ({
-                use registers::$name;
-                let length = lengths[$index]
-                    .unwrap_or(0);
-                let mut register = $name(0);
-                register.set(length);
-                self.device()
-                    .write_register(register)?;
-            })
-        }
-        set_rx_pw!(RxPwP0, 0);
-        set_rx_pw!(RxPwP1, 1);
-        set_rx_pw!(RxPwP2, 2);
-        set_rx_pw!(RxPwP3, 3);
-        set_rx_pw!(RxPwP4, 4);
-        set_rx_pw!(RxPwP5, 5);
+        self.device()
+            .write_register_i(::registers::RxPwP0::addr(), &[lengths[0].unwrap_or(0)])?;
+        self.device()
+            .write_register_i(::registers::RxPwP1::addr(), &[lengths[1].unwrap_or(0)])?;
+        self.device()
+            .write_register_i(::registers::RxPwP2::addr(), &[lengths[2].unwrap_or(0)])?;
+        self.device()
+            .write_register_i(::registers::RxPwP3::addr(), &[lengths[3].unwrap_or(0)])?;
+        self.device()
+            .write_register_i(::registers::RxPwP4::addr(), &[lengths[4].unwrap_or(0)])?;
+        self.device()
+            .write_register_i(::registers::RxPwP5::addr(), &[lengths[5].unwrap_or(0)])?;
 
         Ok(())
     }
