@@ -1,15 +1,17 @@
-use core::fmt;
-use command::{ReadRxPayloadWidth, ReadRxPayload};
-use registers::FifoStatus;
-use device::Device;
-use standby::StandbyMode;
-use payload::Payload;
+use command::{Command, ReadRxPayload, ReadRxPayloadWidth};
 use config::Configuration;
+#[cfg(not(feature = "tiny"))]
+use core::fmt;
+use device::Device;
+use payload::Payload;
+use registers::FifoStatus;
+use standby::StandbyMode;
 
 pub struct RxMode<D: Device> {
     device: D,
 }
 
+#[cfg(not(feature = "tiny"))]
 impl<D: Device> fmt::Debug for RxMode<D> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "RxMode")
@@ -30,36 +32,39 @@ impl<D: Device> RxMode<D> {
 
     /// Is there any incoming data to read? Return the pipe number.
     pub fn can_read(&mut self) -> Result<Option<u8>, D::Error> {
-        self.device.read_register::<FifoStatus>().map(
-            |(status, fifo_status)| {
-                if ! fifo_status.rx_empty() {
+        self.device
+            .read_register::<FifoStatus>()
+            .map(|(status, fifo_status)| {
+                if !fifo_status.rx_empty() {
                     Some(status.rx_p_no())
                 } else {
                     None
                 }
-            },
-        )
+            })
     }
 
     /// Is the RX queue empty?
     pub fn is_empty(&mut self) -> Result<bool, D::Error> {
-        self.device.read_register::<FifoStatus>()
+        self.device
+            .read_register::<FifoStatus>()
             .map(|(_, fifo_status)| fifo_status.rx_empty())
     }
 
     /// Is the RX queue full?
     pub fn is_full(&mut self) -> Result<bool, D::Error> {
-        self.device.read_register::<FifoStatus>().map(
-            |(_, fifo_status)| fifo_status.rx_full()
-        )
+        self.device
+            .read_register::<FifoStatus>()
+            .map(|(_, fifo_status)| fifo_status.rx_full())
     }
 
     pub fn read(&mut self) -> Result<Payload, D::Error> {
-        let (_, payload_width) =
-            self.device.send_command(&ReadRxPayloadWidth)?;
-        let (_, payload) =
-            self.device.send_command(&ReadRxPayload::new(payload_width as usize))?;
-        Ok(payload)
+        // still not happy with the flow here. Ideally, send_command would consume the command (by
+        // calling decode_response) and return the payload/response
+        let mut read_width = ReadRxPayloadWidth::new();
+        self.device.send_command(&mut read_width)?;
+        let mut read_payload = ReadRxPayload::new(read_width.decode_response() as usize);
+        self.device.send_command(&mut read_payload)?;
+        Ok(read_payload.decode_response())
     }
 }
 

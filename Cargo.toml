@@ -13,3 +13,6 @@ homepage = "https://github.com/astro/embedded-nrf24l01"
 embedded-hal = "0.2.0"
 bitfield = "0.12.2"
 heapless = "0.3.6"
+
+[features]
+"tiny" = []
