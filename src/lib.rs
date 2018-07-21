@@ -27,6 +27,9 @@ pub use payload::Payload;
 mod error;
 pub use error::Error;
 
+mod state;
+pub use state::State;
+
 mod device;
 pub use device::Device;
 mod standby;
@@ -37,6 +40,10 @@ mod tx;
 pub use tx::TxMode;
 
 mod network;
+pub use network::Network;
+
+mod transciever;
+pub use transciever::Transceiver;
 
 pub const PIPES_COUNT: usize = 6;
 pub const MIN_ADDR_BYTES: usize = 3;

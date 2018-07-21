@@ -1,5 +1,6 @@
-use payload::Payload;
 use core;
+use payload::Payload;
+use transciever::Transceiver;
 
 const MAX_ROUTES: usize = 8;
 
@@ -15,7 +16,7 @@ type Result<S, T> = core::result::Result<S, RoutingError<T>>;
 #[derive(Debug)]
 pub enum RoutingError<T: Transceiver> {
     NoRouteToHost,
-    TransceiverError(T::Error)
+    TransceiverError(T::Error),
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -32,18 +33,11 @@ struct Message<'a> {
     buf: &'a [u8],
 }
 
-pub trait Transceiver {
-    type Error;
-
-    fn send_to(&mut self, dest: u8, buf: &[u8]) -> core::result::Result<bool, Self::Error>;
-    fn receive(&mut self) -> core::result::Result<Payload, Self::Error>;
-}
-
-impl <'a> Message<'a> {
+impl<'a> Message<'a> {
     fn new(source: Address, dest: Address, buf: &[u8]) -> Message {
         Message {
-            source, 
-            dest, 
+            source,
+            dest,
             hops: 0,
             // TODO: truncate to 28 or panic
             buf,
@@ -57,7 +51,7 @@ impl <'a> Message<'a> {
             dest: data[1],
             // TODO: check hops
             hops: data[2] + 1,
-            buf: &data[3..3+len]
+            buf: &data[3..3 + len],
         }
     }
 
@@ -66,11 +60,13 @@ impl <'a> Message<'a> {
         data[0] = self.source;
         data[1] = self.dest;
         data[2] = self.hops;
-        data[3..3+self.buf.len()].copy_from_slice(&self.buf);
+        data[3..3 + self.buf.len()].copy_from_slice(&self.buf);
         data
     }
 }
 
+/// Very simple static Network for RF24. Eventually to be broken out with Transceiver into its own
+/// crate
 impl Network {
     pub fn new(this_address: Address) -> Network {
         Network {
@@ -90,20 +86,27 @@ impl Network {
     }
 
     fn get_route_to(&self, dest: Address) -> Option<RoutingTableEntry> {
-        self.routes.iter()
+        self.routes
+            .iter()
             .filter_map(|&route| route)
             .find(|&route| route.dest == dest)
     }
 
-    pub fn send_to_wait<T: Transceiver>(&self, buf: &[u8], dest: Address, transciever: &mut T) -> Result<bool, T> {
-        let message = Message::new(self.this_address, dest, buf); 
+    pub fn send_to_wait<T: Transceiver>(
+        &self,
+        buf: &[u8],
+        dest: Address,
+        transciever: &mut T,
+    ) -> Result<bool, T> {
+        let message = Message::new(self.this_address, dest, buf);
 
         self.route(&message, transciever)
     }
 
     fn route<T: Transceiver>(&self, message: &Message, transciever: &mut T) -> Result<bool, T> {
         if let Some(route) = self.get_route_to(message.dest) {
-            transciever.send_to(route.next_hop, &message.get_bytes())
+            transciever
+                .send_to(route.next_hop, &message.get_bytes())
                 .map_err(|e| RoutingError::TransceiverError(e))
         } else {
             Err(RoutingError::NoRouteToHost)
@@ -111,16 +114,19 @@ impl Network {
     }
 
     pub fn receive<T: Transceiver>(&self, transciever: &mut T) -> Result<Option<Payload>, T> {
-        let data = transciever.receive()
+        let result = transciever
+            .receive()
             .map_err(|e| RoutingError::TransceiverError(e))?;
 
-        let message = Message::from_receive(&data);
-        if message.dest == self.this_address {
-            return Ok(Some(Payload::new(&message.buf)));
+        if let Some(data) = result {
+            let message = Message::from_receive(&data);
+            if message.dest == self.this_address {
+                return Ok(Some(Payload::new(&message.buf)));
+            } else {
+                return self.route(&message, transciever).map(|_result| None); // TODO: indicate failure here
+            }
         } else {
-            return self.route(&message, transciever)
-                .map(|result| None); // TODO: indicate failure here
+            Ok(None)
         }
-        Ok(None)
     }
 }
